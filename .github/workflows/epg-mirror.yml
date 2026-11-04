@@ -123,16 +123,6 @@ jobs:
               sys.exit("No valid EPG obtained. Existing site preserved.")
           PY
 
-      - name: Record successful refresh
-        shell: bash
-        run: |
-          date -u '+%Y-%m-%dT%H:%M:%SZ' > last-refresh.txt
-          git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-          git add last-refresh.txt
-          git commit -m "chore: record EPG refresh"
-          git push
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
