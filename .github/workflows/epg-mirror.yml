@@ -1,0 +1,147 @@
+
+name: DIGMA TV EPG Mirror
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/epg-mirror.yml"
+  schedule:
+    - cron: "23 3,15 * * *"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: digma-epg-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download and validate EPG
+        shell: bash
+        run: |
+          python - <<'PY'
+          import gzip
+          import pathlib
+          import sys
+          import urllib.request
+          import xml.etree.ElementTree as ET
+          from datetime import datetime, timedelta, timezone
+
+          sources = [
+              "https://iptv-epg.org/files/epg-ru.xml.gz",
+              "https://iptv-epg.org/files/epg-ru.xml",
+          ]
+
+          tomorrow = (
+              datetime.now(timezone.utc) + timedelta(days=1)
+          ).strftime("%Y%m%d")
+
+          for url in sources:
+              try:
+                  print("Downloading:", url)
+
+                  request = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": "DIGMA-EPG-Mirror/1.0",
+                          "Accept": "application/xml, */*",
+                      },
+                  )
+
+                  with urllib.request.urlopen(
+                      request, timeout=45
+                  ) as response:
+                      data = response.read(90_000_001)
+
+                  if url.endswith(".gz"):
+                      data = gzip.decompress(data)
+
+                  if not 100_000 <= len(data) <= 90_000_000:
+                      raise ValueError("Unexpected XML size")
+
+                  root = ET.fromstring(data)
+
+                  if root.tag != "tv":
+                      raise ValueError("Not an XMLTV document")
+
+                  channels = root.findall("channel")
+                  programmes = root.findall("programme")
+
+                  if len(channels) < 40:
+                      raise ValueError("Too few channels")
+
+                  if len(programmes) < 1000:
+                      raise ValueError("Too few programmes")
+
+                  last_day = max(
+                      (
+                          p.get("stop", "")[:8]
+                          for p in programmes
+                      ),
+                      default="00000000",
+                  )
+
+                  if last_day < tomorrow:
+                      raise ValueError("EPG is outdated")
+
+                  folder = pathlib.Path("public")
+                  folder.mkdir(exist_ok=True)
+
+                  (folder / "epg-ru.xml").write_bytes(data)
+                  (folder / ".nojekyll").touch()
+
+                  (folder / "source.txt").write_text(
+                      "EPG source: https://iptv-epg.org/\n",
+                      encoding="utf-8",
+                  )
+
+                  print("VALID XMLTV")
+                  print("Channels:", len(channels))
+                  print("Programmes:", len(programmes))
+                  print("Last EPG date:", last_day)
+                  print("Size:", len(data), "bytes")
+                  break
+
+              except Exception as error:
+                  print("Source failed:", repr(error))
+          else:
+              sys.exit("No valid EPG obtained. Existing site preserved.")
+          PY
+
+      - name: Record successful refresh
+        shell: bash
+        run: |
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > last-refresh.txt
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+          git add last-refresh.txt
+          git commit -m "chore: record EPG refresh"
+          git push
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload EPG
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+
+      - name: Publish EPG
+        id: deploy
+        uses: actions/deploy-pages@v4
