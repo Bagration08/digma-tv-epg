@@ -127,6 +127,9 @@ jobs:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
+      - name: Include IPTV playlist
+        run: cp DIGMA-TV-V4-EPG.m3u public/DIGMA-TV-V4-EPG.m3u
+
       - name: Upload EPG
         uses: actions/upload-pages-artifact@v4
         with:
